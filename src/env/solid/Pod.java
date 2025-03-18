@@ -4,6 +4,14 @@ import cartago.Artifact;
 import cartago.OPERATION;
 import cartago.OpFeedbackParam;
 
+import java.io.BufferedReader;
+import java.io.IOException;
+import java.io.InputStreamReader;
+import java.net.HttpURLConnection;
+import java.net.URL;
+import java.nio.charset.StandardCharsets;
+
+
 /**
  * A CArtAgO artifact that agent can use to interact with LDP containers in a Solid pod.
  */
@@ -30,6 +38,58 @@ public class Pod extends Artifact {
     @OPERATION
     public void createContainer(String containerName) {
         log("1. Implement the method createContainer()");
+        String base = this.podURL;
+        if (!base.endsWith("/")) {
+            base = base + "/";
+        }
+        String containerURL = base + containerName + "/";
+        this.log("Attempting to create container at: " + containerURL);
+
+        URL url;
+        HttpURLConnection conn;
+        int responseCode;
+        try {
+            // Check if container exists (HEAD request)
+            url = new URL(containerURL);
+            conn = (HttpURLConnection) url.openConnection();
+            conn.setConnectTimeout(5000);
+            conn.setReadTimeout(5000);
+            conn.setRequestMethod("HEAD");
+            conn.connect();
+            responseCode = conn.getResponseCode();
+            conn.disconnect();
+            if (responseCode == HttpURLConnection.HTTP_OK) {
+                this.log("Container already exists at: " + containerURL);
+                return;
+            }
+        } catch (IOException e) {
+            this.log("Container does not exist, proceeding to create it: " + e.getMessage());
+        }
+
+        try {
+            // Create the container with a PUT request.
+            url = new URL(containerURL);
+            conn = (HttpURLConnection) url.openConnection();
+            conn.setConnectTimeout(5000);
+            conn.setReadTimeout(5000);
+            conn.setRequestMethod("PUT");
+            conn.setDoOutput(true);
+            conn.setRequestProperty("Content-Type", "text/turtle");
+            // Indicate that we are creating an LDP container.
+            conn.setRequestProperty("Link", "<http://www.w3.org/ns/ldp#personal-data>; rel=\"type\"");
+            conn.getOutputStream().write(new byte[0]);
+            conn.getOutputStream().flush();
+            conn.getOutputStream().close();
+            responseCode = conn.getResponseCode();
+            if (responseCode != HttpURLConnection.HTTP_CREATED && responseCode != HttpURLConnection.HTTP_OK) {
+                this.log("Failed to create container. Response code: " + responseCode);
+            } else {
+                this.log("Container created successfully at: " + containerURL);
+            }
+            conn.disconnect();
+        } catch (IOException e) {
+            this.log("Error creating container: " + e.getMessage());
+        }
     }
 
   /**
@@ -42,6 +102,35 @@ public class Pod extends Artifact {
     @OPERATION
     public void publishData(String containerName, String fileName, Object[] data) {
         log("2. Implement the method publishData()");
+        String base = this.podURL;
+        if (!base.endsWith("/")) {
+            base = base + "/";
+        }
+        String containerURL = base + containerName + "/";
+        String resourceURL = containerURL + fileName;
+        String dataString = createStringFromArray(data);
+
+        try {
+            URL url = new URL(resourceURL);
+            HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+            conn.setConnectTimeout(5000);
+            conn.setReadTimeout(5000);
+            conn.setRequestMethod("PUT");
+            conn.setDoOutput(true);
+            conn.setRequestProperty("Content-Type", "text/plain");
+            conn.getOutputStream().write(dataString.getBytes(StandardCharsets.UTF_8));
+            conn.getOutputStream().flush();
+            conn.getOutputStream().close();
+            int responseCode = conn.getResponseCode();
+            if (responseCode != HttpURLConnection.HTTP_CREATED && responseCode != HttpURLConnection.HTTP_OK) {
+                this.log("Failed to publish data. Response code: " + responseCode);
+            } else {
+                this.log("Data published successfully to: " + resourceURL);
+            }
+            conn.disconnect();
+        } catch (IOException e) {
+            this.log("Error publishing data: " + e.getMessage());
+        }
     }
 
   /**
@@ -66,19 +155,42 @@ public class Pod extends Artifact {
     public Object[] readData(String containerName, String fileName) {
         log("3. Implement the method readData(). Currently, the method returns mock data");
 
-        // Remove the following mock responses once you have implemented the method
-        switch(fileName) {
-            case "watchlist.txt":
-                Object[] mockWatchlist = new Object[]{"The Matrix", "Inception", "Avengers: Endgame"};
-                return mockWatchlist;
-            case "sleep.txt":
-                Object[] mockSleepData = new Object[]{"6", "7", "5"};
-                return mockSleepData;
-            case "trail.txt":
-                Object[] mockTrailData = new Object[]{"3", "5.5", "5.5"};
-                return mockTrailData; 
-            default:
+        this.log("Attempting to read data from container: " + containerName + ", file: " + fileName);
+        String base = this.podURL;
+        if (!base.endsWith("/")) {
+            base = base + "/";
+        }
+        String containerURL = base + containerName + "/";
+        String resourceURL = containerURL + fileName;
+
+        try {
+            URL url = new URL(resourceURL);
+            HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+            conn.setConnectTimeout(5000);
+            conn.setReadTimeout(5000);
+            conn.setRequestMethod("GET");
+            conn.setRequestProperty("Accept", "text/plain");
+            int responseCode = conn.getResponseCode();
+            if (responseCode != HttpURLConnection.HTTP_OK) {
+                this.log("Failed to read data. Response code: " + responseCode);
+                conn.disconnect();
                 return new Object[0];
+            } else {
+                BufferedReader reader = new BufferedReader(new InputStreamReader(conn.getInputStream(), StandardCharsets.UTF_8));
+                StringBuilder responseBuilder = new StringBuilder();
+                String line;
+                while ((line = reader.readLine()) != null) {
+                    responseBuilder.append(line).append("\n");
+                }
+                reader.close();
+                conn.disconnect();
+                String responseString = responseBuilder.toString();
+                this.log("Data read successfully from: " + resourceURL);
+                return createArrayFromString(responseString);
+            }
+        } catch (IOException e) {
+            this.log("Error reading data: " + e.getMessage());
+            return new Object[0];
         }
 
     }
